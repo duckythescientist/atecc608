@@ -15,29 +15,65 @@ from eeprom_config_dumps import *
 
 @dataclass
 class ATECC608_SlotConfig:
-    write_config: int = None
-    write_key: int = None
-    is_secret: bool = None
-    encrypt_read: bool = None
-    limited_use: bool = None
-    no_mac: bool = None
     read_key: int = None
+    no_mac: bool = None
+    limited_use: bool = None
+    encrypt_read: bool = None
+    is_secret: bool = None
+    write_key: int = None
+    write_config: int = None
 
     @classmethod
     def from_int(cls, val):
         slot_cfg = cls()
-        slot_cfg.write_config = val >> 12
-        slot_cfg.write_key = (val >> 8) & 0xF
-        slot_cfg.is_secret = bool(val & (1<<7))
-        slot_cfg.encrypt_read = bool(val & (1<<6))
-        slot_cfg.limited_use = bool(val & (1<<5))
-        slot_cfg.no_mac = bool(val & (1<<4))
         slot_cfg.read_key = val & 0xF
+        slot_cfg.no_mac = bool(val & (1<<4))
+        slot_cfg.limited_use = bool(val & (1<<5))
+        slot_cfg.encrypt_read = bool(val & (1<<6))
+        slot_cfg.is_secret = bool(val & (1<<7))
+        slot_cfg.write_key = (val >> 8) & 0xF
+        slot_cfg.write_config = val >> 12
 
         return slot_cfg
 
+    def pack(self):
+        val = 0
+        val |= (self.read_key & 0xF) << 0
+        val |= (self.no_mac & 0x1) << 4
+        val |= (self.limited_use & 0x1) << 5
+        val |= (self.encrypt_read & 0x1) << 6
+        val |= (self.is_secret & 0x1) << 7
+        val |= (self.write_key & 0xF) << 8
+        val |= (self.write_config & 0xF) << 12
+        return val
+
     def stringify(self):
         stringified = list()
+
+        stringified.append(f"if public key:")
+        if self.read_key == 0:
+            stringified.append(f"\tused for source of checkmac/copy")
+        else:
+            stringified.append(f"\tread encryption key slot: {self.read_key:2d}")
+        stringified.append(f"if private key:")
+        if self.read_key & 0xC == 0x8:
+            stringified.append(f"\tmaster secret in slot N+1")
+        else:
+            stringified.append(f"\tECDH master secret output in clear")
+        stringified.append(f"\texternal signatures of messages " + ("are" if self.read_key & 0x1 else "are NOT") + " enabled")
+        stringified.append(f"\tinternal signatures of messages " + ("are" if self.read_key & 0x2 else "are NOT") + " enabled")
+        stringified.append(f"\tECDH operation " + ("is" if self.read_key & 0x4 else "is NOT") + " permitted")
+        
+        stringified.append(f"no_mac: {self.no_mac:b}")
+
+        stringified.append(f"limited_use: {self.limited_use:b}")
+
+        stringified.append(f"encrypt_read: {self.encrypt_read:b}")
+
+        stringified.append(f"is_secret: {self.is_secret:b}")
+
+        stringified.append(f"write_key validation/encryption slot: {self.write_key:2d}")
+        
         stringified.append(f"write_config: {self.write_config:02X}")
         if self.write_config == 0:
             write = "always"
@@ -68,25 +104,6 @@ class ATECC608_SlotConfig:
         stringified.append(f"\tgenkey command: " + str(bool(self.write_config & 0x2)))
         stringified.append(f"\tprivwrite command: " + str(bool(self.write_config & 0x4)))
 
-        stringified.append(f"write_key validation/encryption slot: {self.write_key:2d}")
-        stringified.append(f"is_secret: {self.is_secret:b}")
-        stringified.append(f"encrypt_read: {self.encrypt_read:b}")
-        stringified.append(f"limited_use: {self.limited_use:b}")
-        stringified.append(f"no_mac: {self.no_mac:b}")
-        stringified.append(f"if public key:")
-        if self.read_key == 0:
-            stringified.append(f"\tused for source of checkmac/copy")
-        else:
-            stringified.append(f"\tread encryption key slot: {self.read_key:2d}")
-        stringified.append(f"if private key:")
-        if self.read_key & 0x8:
-            stringified.append(f"\tmaster secret in slot N+1")
-        else:
-            stringified.append(f"\tECDH master secret output in clear")
-        stringified.append(f"\tECDH operation " + ("is" if self.read_key & 0x4 else "is NOT") + " permitted")
-        stringified.append(f"\tinternal signatures of messages " + ("are" if self.read_key & 0x4 else "are NOT") + " enabled")
-        stringified.append(f"\texternal signatures of messages " + ("are" if self.read_key & 0x4 else "are NOT") + " enabled")
-        
         return "\n".join(stringified)
 
 
@@ -122,9 +139,23 @@ class ATECC608_KeyConfig:
 
         return slot_cfg
 
+    def pack(self):
+        val = 0
+        val |= (self.private & 0x1) << 0
+        val |= (self.pub_info & 0x1) << 1
+        val |= (self.key_type & 0x7) << 2
+        val |= (self.lockable & 0x1) << 5
+        val |= (self.req_random & 0x1) << 6
+        val |= (self.req_auth & 0x1) << 7
+        val |= (self.auth_key & 0xF) << 7
+        val |= (self.persistent_disable & 0x1) << 12
+        val |= (self.rfu & 0x1) << 13
+        val |= (self.x509_id & 0x3) << 14
+        return val
+
+
     def stringify(self):
         stringified = list()
-
 
         stringified.append("key is " + "NOT " * (not self.private) + "a private key")
         if self.private:
@@ -164,13 +195,6 @@ class ATECC608_KeyConfig:
             stringified.append(f"\tINVALID RFU: {self.rfu:b}")
         stringified.append(f"x509 format index: {self.x509_id}")
 
-
-
-
-
-
-
-
         return "\n".join(stringified)
 
 
@@ -183,17 +207,29 @@ class ATECC608_SecureBoot:
     pubkey_slot: int = None
 
     @classmethod
-    def from_int(cls, val):
+    def from_int(cls, val, verify=True):
         slot_cfg = cls()
         slot_cfg.mode = val & 0x3
-        assert not bool(val & (1<<2))
+        if verify:
+            assert not bool(val & (1<<2))
         slot_cfg.persist = bool(val & (1<<3))
         slot_cfg.rand_nonce = bool(val & (1<<3))
-        assert not (val >> 5) & 0x7
+        if verify:
+            assert not (val >> 5) & 0x7
         slot_cfg.signature_digest_slot = (val >> 8) & 0xF
         slot_cfg.pubkey_slot = (val >> 12) & 0xF
 
         return slot_cfg
+
+    def pack(self):
+        val = 0
+        val |= (self.mode & 0x3) << 0
+        val |= (self.persist & 0x1) << 3
+        val |= (self.rand_nonce & 0x1) << 4
+        val |= (self.signature_digest_slot & 0xF) << 8
+        val |= (self.pubkey_slot & 0xF) << 12
+        return val
+
 
     def stringify(self):
         stringified = list()
@@ -410,8 +446,24 @@ class ATECC608_Config:
 
 
 
+# def brute_check():
+#     for i in range(65536):
+#         key_config = ATECC608_KeyConfig.from_int(i)
+#         v = key_config.pack()
+#         assert v == i, f"keycfg failed {v:016b} != {i:016b}"
+#         slot_config = ATECC608_SlotConfig.from_int(i)
+#         v = slot_config.pack()
+#         assert v == i, f"sltcfg failed {v:016b} != {i:016b}"
+#         secure_boot = ATECC608_SecureBoot.from_int(i, verify=False)
+#         v = secure_boot.pack()
+#         assert v == i, f"secubt failed {v:016b} != {i:016b}"
+#     print("finished checking packing")
+
+
+
+
 
 
 if __name__ == '__main__':
-    cfg = ATECC608_Config.from_config_block(CONFIG_FACTORY_TFLXTLS)
+    cfg = ATECC608_Config.from_config_block(CONFIG_FACTORY_TNGTLS)
     print(cfg.stringify())
